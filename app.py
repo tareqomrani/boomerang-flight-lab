@@ -304,15 +304,37 @@ def simulate(cfg: SimConfig) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def trajectory_plot(df: pd.DataFrame, cfg: SimConfig) -> go.Figure:
+def trajectory_plot(df: pd.DataFrame, cfg: SimConfig, targets: list[dict] | None = None) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["x_m"], y=df["y_m"], mode="lines", name="Trajectory", line=dict(color=SUN, width=4)))
     fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers+text", name="Launch", marker=dict(size=16, color=WAR_RED), text=["Launch"], textposition="bottom center"))
     final = df.iloc[-1]
     fig.add_trace(go.Scatter(x=[final["x_m"]], y=[final["y_m"]], mode="markers+text", name="Boomerang", marker=dict(size=18, color=TURQUOISE), text=["Boomerang"], textposition="top center"))
 
-    for gx, gy in [(6.5, 3.5), (10.8, 6.2), (15.2, 3.8)]:
-        fig.add_shape(type="circle", x0=gx-0.8, y0=gy-0.8, x1=gx+0.8, y1=gy+0.8, line=dict(color=TURQUOISE, width=2))
+    if targets:
+        for target in targets:
+            gx, gy, radius = target["x"], target["y"], target["radius"]
+            fig.add_shape(
+                type="circle",
+                x0=gx - radius,
+                y0=gy - radius,
+                x1=gx + radius,
+                y1=gy + radius,
+                line=dict(color=TURQUOISE, width=3),
+                fillcolor="rgba(31,188,194,0.10)",
+            )
+            fig.add_trace(go.Scatter(
+                x=[gx],
+                y=[gy],
+                mode="markers+text",
+                name=f"{target['name']} ({target['points']} pts)",
+                marker=dict(size=10, color=SUN, symbol="x"),
+                text=[f"{target['points']} pts"],
+                textposition="middle right",
+            ))
+    else:
+        for gx, gy in [(6.5, 3.5), (10.8, 6.2), (15.2, 3.8)]:
+            fig.add_shape(type="circle", x0=gx-0.8, y0=gy-0.8, x1=gx+0.8, y1=gy+0.8, line=dict(color=TURQUOISE, width=2))
 
     fig.update_layout(
         title=f"🪃 Flight Path | {cfg.mode} Mode",
@@ -360,7 +382,7 @@ st.markdown(
     """
 <div class="hero">
     <h1>🪃 Return Vector: Boomerang Flight Lab 🦘🔥🌅</h1>
-    <p>A Streamlit-compatible aerospace-inspired boomerang simulator with aerodynamic physics, gyroscopic-style turning, atmospheric effects, telemetry plots, and a bright ochre/desert theme.</p>
+    <p>A Streamlit-compatible aerospace-inspired boomerang simulator with aerodynamic physics, gyroscopic-style turning, atmospheric effects, telemetry plots, target scoring, and a bright ochre/desert theme.</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -386,21 +408,29 @@ with st.sidebar:
     wind_on = st.toggle("Wind / Gusts / Thermal Uplift", value=True)
     duration_s = st.slider("Simulation Duration (s)", 4.0, 22.0, 14.0, 0.5)
 
+    st.subheader("🎯 Target Challenge")
+    target_challenge = st.toggle("Enable Target Challenge", value=True)
+    target_difficulty = st.selectbox("Target Difficulty", ["Easy", "Medium", "Hard"], index=1)
+
 cfg = SimConfig(mode, throw_angle_deg, throw_speed_mps, spin_rpm, bank_deg, camber, chord_m, arm_length_m, blade_count, wind_on, duration_s)
 df = simulate(cfg)
 latest = df.iloc[-1]
 
+targets = target_set(target_difficulty) if target_challenge else []
+target_scores, target_total = score_targets(df, targets) if targets else (pd.DataFrame(), 0)
+combined_score = int(latest["score"]) + int(target_total)
+
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Score", f"{int(latest['score']):04d}")
-c2.metric("Closest Return", f"{latest['closest_return_m']:.2f} m")
-c3.metric("Spin", f"{latest['spin_rpm']:.0f} rpm")
-c4.metric("Energy", f"{latest['energy_j']:.1f} J")
+c1.metric("Flight Score", f"{int(latest['score']):04d}")
+c2.metric("Target Points", f"{target_total}")
+c3.metric("Combined Score", f"{combined_score}")
+c4.metric("Closest Return", f"{latest['closest_return_m']:.2f} m")
 
 c5, c6, c7, c8 = st.columns(4)
 c5.metric("Lift", f"{latest['lift_n']:.2f} N")
 c6.metric("Torque", f"{latest['torque_nm']:.4f} N*m")
 c7.metric("Airspeed", f"{latest['airspeed_mps']:.2f} m/s")
-c8.metric("Altitude", f"{latest['altitude_m']:.2f} m")
+c8.metric("Spin", f"{latest['spin_rpm']:.0f} rpm")
 
 if bool(latest["crashed"]):
     st.markdown('<div class="warning-box">⚠️ Ground impact detected. Reduce bank, increase spin, or adjust launch speed.</div>', unsafe_allow_html=True)
@@ -411,16 +441,20 @@ else:
 
 left, right = st.columns([1.45, 1.0])
 with left:
-    st.plotly_chart(trajectory_plot(df, cfg), use_container_width=True)
+    st.plotly_chart(trajectory_plot(df, cfg, targets), use_container_width=True)
 with right:
     st.plotly_chart(attitude_plot(df), use_container_width=True)
+
+if target_challenge:
+    st.subheader("🎯 Target Challenge Scoreboard")
+    st.dataframe(target_scores, use_container_width=True, hide_index=True)
 
 st.plotly_chart(telemetry_plot(df), use_container_width=True)
 
 with st.expander("📚 Physics Summary"):
     st.markdown(
         """
-This Streamlit version keeps the core educational model while removing the desktop-only Pygame dependency.
+This Streamlit version keeps the core educational model while removing the desktop-only Pygame dependency. Target Challenge mode scores hits when the simulated trajectory passes within a target ring radius.
 
 **Lift**
 
