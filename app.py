@@ -1,496 +1,235 @@
 """
-Return Vector: Boomerang Flight Lab
-Streamlit Cloud compatible version.
+Return Vector — Boomerang Target Lab
+Streamlit + HTML5 Canvas game.
 
 Run:
     streamlit run app.py
 """
 
-from __future__ import annotations
-
-import math
-from dataclasses import dataclass
-
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
+import json
 import streamlit as st
+import streamlit.components.v1 as components
 
+st.set_page_config(
+    page_title="Return Vector — Boomerang Target Lab",
+    page_icon="🪃",
+    layout="wide",
+)
 
-st.set_page_config(page_title="Return Vector: Boomerang Flight Lab", page_icon="🪃", layout="wide")
+st.sidebar.header("🪃 Game Settings")
+target_goal = st.sidebar.slider("Target goal", 3, 20, 8, 1)
+target_count = st.sidebar.slider("Total targets", target_goal, 30, max(12, target_goal), 1)
+rock_count = st.sidebar.slider("Rock hazards", 0, 35, 14, 1)
+throw_power = st.sidebar.slider("Throw power", 0.65, 1.60, 1.00, 0.05)
+spin_power = st.sidebar.slider("Spin power", 0.65, 1.80, 1.00, 0.05)
+wind_strength = st.sidebar.slider("Wind strength", 0.0, 1.8, 0.65, 0.05)
+drag = st.sidebar.slider("Aerodynamic drag", 0.20, 1.30, 0.62, 0.05)
+control_mode = st.sidebar.selectbox("Control mode", ["D-pad", "Joystick"])
+difficulty = st.sidebar.selectbox("Target difficulty", ["Easy", "Medium", "Hard"], index=1)
 
-OCHRE = "#C65B1C"
-SAND = "#FFC46E"
-CLAY = "#8D361F"
-CHARCOAL = "#110D0B"
-BONE = "#FFEEE6"
-SUN = "#FFB824"
-TURQUOISE = "#1FBCC2"
-WAR_RED = "#DB2826"
-GREEN = "#39CC79"
+cfg = dict(
+    target_goal=int(target_goal),
+    target_count=int(target_count),
+    rock_count=int(rock_count),
+    throw_power=float(throw_power),
+    spin_power=float(spin_power),
+    wind_strength=float(wind_strength),
+    drag=float(drag),
+    control=("joystick" if control_mode == "Joystick" else "dpad"),
+    difficulty=difficulty.lower(),
+)
 
-RHO0 = 1.225
-G = 9.80665
-SCALE_HEIGHT_M = 8500.0
-
-st.markdown(
-    f"""
+HTML = r"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Return Vector — Boomerang Target Lab</title>
 <style>
-.stApp {{
-    background:
-        radial-gradient(circle at 82% 8%, rgba(255,184,36,0.22), transparent 25%),
-        linear-gradient(135deg, #160B07 0%, #2B120B 45%, #0F0A08 100%);
-    color: {BONE};
-}}
-.block-container {{ padding-top: 1.4rem; }}
-.hero {{
-    border: 2px solid {OCHRE};
-    border-radius: 22px;
-    padding: 1.3rem 1.5rem;
-    background:
-        linear-gradient(135deg, rgba(198,91,28,0.28), rgba(17,13,11,0.88)),
-        repeating-linear-gradient(45deg, rgba(255,196,110,0.10) 0 8px, transparent 8px 22px);
-    box-shadow: 0 0 32px rgba(255,98,28,0.18);
-}}
-.hero h1 {{ color: {SUN}; font-size: 2.5rem; margin-bottom: 0.25rem; }}
-.hero p {{ color: {BONE}; font-size: 1.05rem; }}
-.warning-box {{
-    border-left: 5px solid {WAR_RED};
-    background: rgba(219,40,38,0.12);
-    padding: 0.9rem 1rem;
-    border-radius: 12px;
-    color: {BONE};
-}}
-.good-box {{
-    border-left: 5px solid {GREEN};
-    background: rgba(57,204,121,0.10);
-    padding: 0.9rem 1rem;
-    border-radius: 12px;
-    color: {BONE};
-}}
-.small-note {{ color: rgba(255,238,230,0.72); font-size: 0.88rem; }}
-div[data-testid="stMetricValue"] {{ color: {SUN}; }}
-hr {{ border-color: rgba(255,196,110,0.25); }}
+  :root{
+    --charcoal:#110d0b; --clay:#8d361f; --ochre:#c65b1c; --sand:#ffc46e;
+    --sun:#ffb824; --red:#db2826; --bone:#fff0d0; --turq:#1fbcc2; --green:#39cc79;
+  }
+  html,body{
+    margin:0;height:100%;
+    background:radial-gradient(circle at 76% 12%, rgba(255,184,36,.22), transparent 24%),
+      linear-gradient(180deg,#2a1008 0%, #140906 52%, #070403 100%);
+    color:var(--bone);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    overflow-x:hidden;
+  }
+  .wrap{display:flex;flex-direction:column;min-height:720px}
+  header{
+    display:flex;justify-content:space-between;align-items:center;gap:.6rem;
+    padding:.7rem 1rem;
+    background:repeating-linear-gradient(45deg, rgba(255,196,110,.16) 0 8px, transparent 8px 22px),
+      linear-gradient(90deg,#140805,#8d361f 42%,#110d0b);
+    border-bottom:3px solid var(--ochre);
+    box-shadow:0 8px 20px rgba(0,0,0,.25);
+  }
+  header h1{font-size:1.2rem;margin:0;color:var(--sun);letter-spacing:.02em}
+  .pill{font-size:.82rem;padding:.25rem .6rem;border-radius:999px;background:#0007;border:1px solid var(--sand);color:var(--bone);white-space:nowrap}
+  .row{display:flex;gap:.45rem;align-items:center}
+  .col{display:flex;flex-direction:column;gap:.45rem;align-items:center;justify-content:center;min-width:160px}
+  #arena{
+    border:4px solid rgba(255,196,110,.85); border-radius:18px; position:relative; overflow:hidden;
+    min-height:460px; max-width:1220px; margin:.4rem auto 7rem auto; background:#160b07;
+    box-shadow:0 0 0 3px #0008 inset, 0 12px 30px #0008;
+  }
+  canvas{display:block;width:100%;height:100%}
+  .hud{
+    position:absolute;right:.65rem;bottom:.65rem;z-index:3;background:rgba(17,13,11,.88);
+    border:2px solid var(--ochre);border-radius:14px;padding:.45rem .6rem;
+    display:grid;grid-template-columns:repeat(2,minmax(90px,1fr));gap:.28rem .7rem;
+    box-shadow:0 0 20px rgba(255,184,36,.18);pointer-events:none;font-weight:800;color:var(--bone);font-size:.82rem;
+  }
+  .hud span{color:var(--sun)}
+  .aeroHud{
+    position:absolute;left:.65rem;top:.65rem;z-index:3;background:rgba(17,13,11,.84);
+    border:2px solid var(--turq);border-radius:14px;padding:.55rem .7rem;min-width:245px;
+    box-shadow:0 0 20px rgba(31,188,194,.18);pointer-events:none;font-weight:750;color:var(--bone);font-size:.82rem;
+  }
+  .aeroHud h3{margin:.1rem 0 .4rem 0;color:var(--turq);font-size:.9rem;letter-spacing:.06em}
+  .aeroLine{display:flex;justify-content:space-between;gap:1rem;border-bottom:1px dotted rgba(255,196,110,.25);padding:.08rem 0}
+  .aeroLine span:last-child{color:var(--sun)}
+  .hint{color:rgba(255,240,208,.86);text-align:center;padding:.4rem 0;font-weight:700}
+  .dock{
+    position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
+    gap:.75rem;padding:.7rem 1rem;background:repeating-linear-gradient(90deg, rgba(198,91,28,.15) 0 14px, transparent 14px 32px),
+      linear-gradient(180deg, rgba(17,13,11,.76), rgba(17,13,11,.96));
+    border-top:3px solid var(--ochre);backdrop-filter:saturate(1.1) blur(6px);
+  }
+  .btn{
+    display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:16px;
+    font-weight:900;font-size:22px;border:2px solid rgba(255,196,110,.66);
+    background:linear-gradient(180deg,#3a160b,#1b0c07);color:var(--sand);box-shadow:0 4px 0 #0008;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+  }
+  .btn:active,.btn.active{transform:translateY(1px);box-shadow:0 2px 0 #0008;background:linear-gradient(180deg,#6b2715,#2a1008);border-color:var(--sun)}
+  .widebtn{width:160px;height:64px;font-size:17px;border-radius:16px}
+  .pad{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,64px);gap:.4rem}
+  .ghost{opacity:0}
+  .stickpad{
+    position:relative;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle at 50% 50%, #5b2110, #170906);
+    border:2px solid var(--sand);box-shadow:inset 0 8px 18px #0008, 0 4px 0 #0007;touch-action:none;
+  }
+  .stick{
+    position:absolute;left:50%;top:50%;width:84px;height:84px;margin:-42px 0 0 -42px;border-radius:50%;
+    background:linear-gradient(180deg,var(--sun),var(--ochre));border:3px solid var(--bone);box-shadow:0 4px 0 #0008;
+    display:flex;align-items:center;justify-content:center;font-weight:900;color:var(--charcoal);
+  }
+  @media(max-width:720px){
+    header h1{font-size:1rem}.pill{font-size:.72rem}.hud{grid-template-columns:1fr;right:.4rem;bottom:.4rem;font-size:.72rem}
+    .aeroHud{left:.4rem;top:.4rem;min-width:190px;font-size:.72rem;padding:.45rem}
+    .btn{width:56px;height:56px;font-size:19px;border-radius:14px}.widebtn{width:136px;height:56px}
+    .pad{grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px)}
+    .stickpad{width:158px;height:158px}.stick{width:74px;height:74px;margin:-37px 0 0 -37px}
+  }
 </style>
-""",
-    unsafe_allow_html=True,
-)
-
-
-@dataclass
-class SimConfig:
-    mode: str
-    throw_angle_deg: float
-    throw_speed_mps: float
-    spin_rpm: float
-    bank_deg: float
-    camber: float
-    chord_m: float
-    arm_length_m: float
-    blade_count: int
-    wind_on: bool
-    duration_s: float
-    dt: float = 0.035
-    mass_kg: float = 0.095
-    cl_alpha: float = 4.8
-    cd0: float = 0.045
-    k_induced: float = 0.08
-
-
-def clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
-
-
-def rpm_to_rad_s(rpm: float) -> float:
-    return rpm * 2.0 * math.pi / 60.0
-
-
-def rad_s_to_rpm(rad_s: float) -> float:
-    return rad_s * 60.0 / (2.0 * math.pi)
-
-
-def unit_from_angle(deg: float) -> np.ndarray:
-    rad = math.radians(deg)
-    return np.array([math.cos(rad), math.sin(rad)], dtype=float)
-
-
-def rotate_vec(v: np.ndarray, deg: float) -> np.ndarray:
-    rad = math.radians(deg)
-    c, s = math.cos(rad), math.sin(rad)
-    return np.array([c * v[0] - s * v[1], s * v[0] + c * v[1]], dtype=float)
-
-
-def air_density_at_altitude(altitude_m: float) -> float:
-    return RHO0 * math.exp(-max(0.0, altitude_m) / SCALE_HEIGHT_M)
-
-
-def wind_vector_mps(t: float, enabled: bool, altitude_m: float) -> np.ndarray:
-    if not enabled:
-        return np.zeros(2)
-    shear = 1.0 + 0.035 * clamp(altitude_m, 0.0, 30.0)
-    base = np.array([1.4 + 0.7 * math.sin(t * 0.7), 0.4 * math.cos(t * 0.45)])
-    gust = np.array([
-        0.35 * math.sin(t * 4.1 + altitude_m * 0.7),
-        0.24 * math.cos(t * 3.4 + altitude_m * 0.4),
-    ])
-    return base * shear + gust
-
-
-def thermal_uplift_mps2(pos_m: np.ndarray, t: float, enabled: bool) -> float:
-    if not enabled:
-        return 0.0
-    columns = [
-        (np.array([6.5, 3.5]), 2.2, 1.35),
-        (np.array([13.0, 7.5]), 2.8, 0.95),
-    ]
-    uplift = 0.0
-    for center, radius, strength in columns:
-        d = float(np.linalg.norm(pos_m - center))
-        uplift += strength * math.exp(-(d * d) / (2.0 * radius * radius))
-    return uplift * (0.7 + 0.3 * math.sin(t * 0.8))
-
-
-def turbulence_vector_mps2(t: float, altitude_m: float, enabled: bool) -> np.ndarray:
-    if not enabled:
-        return np.zeros(2)
-    amp = 0.12 + 0.012 * clamp(altitude_m, 0.0, 25.0)
-    return np.array([
-        amp * math.sin(9.0 * t + 1.7 * altitude_m),
-        amp * math.cos(7.3 * t + 0.9 * altitude_m),
-    ])
-
-
-def aero_coefficients(alpha_rad: float, camber: float, cfg: SimConfig) -> tuple[float, float]:
-    alpha_eff = alpha_rad + camber
-    cl = clamp(cfg.cl_alpha * alpha_eff, -1.15, 1.35)
-    if abs(alpha_eff) > math.radians(15):
-        excess = abs(alpha_eff) - math.radians(15)
-        cl *= max(0.45, 1.0 - 2.2 * excess)
-    cd = cfg.cd0 + cfg.k_induced * cl * cl
-    return cl, cd
-
-
-def simulate(cfg: SimConfig) -> pd.DataFrame:
-    pos = np.array([0.0, 0.0], dtype=float)
-    vel = unit_from_angle(cfg.throw_angle_deg) * cfg.throw_speed_mps
-    omega = rpm_to_rad_s(cfg.spin_rpm)
-
-    roll_deg = cfg.bank_deg
-    pitch_deg = 6.0
-    yaw_deg = cfg.throw_angle_deg
-    p_rad_s = q_rad_s = r_rad_s = 0.0
-    altitude = 1.1
-    crashed = False
-    closest_return = 9999.0
-    max_range = 0.0
-
-    blade_area = cfg.arm_length_m * cfg.chord_m * cfg.blade_count
-    effective_radius = 0.66 * cfg.arm_length_m
-    inertia = cfg.mass_kg * cfg.arm_length_m ** 2 / 3.0
-
-    rows = []
-    t = 0.0
-    while t <= cfg.duration_s:
-        rho = air_density_at_altitude(altitude)
-        wind = wind_vector_mps(t, cfg.wind_on, altitude)
-        air_v = vel - wind
-        airspeed = float(np.linalg.norm(air_v)) + 1e-9
-
-        r = effective_radius
-        v_forward = max(0.1, airspeed + r * max(omega, 0.1))
-        v_retreat = max(0.1, abs(airspeed - r * max(omega, 0.1)))
-
-        if cfg.mode == "Arcade":
-            spin_norm = clamp(rad_s_to_rpm(omega) / 1600.0, 0.0, 1.8)
-            bank_norm = math.sin(math.radians(roll_deg))
-            lift_n = 0.018 * airspeed ** 2 * (0.40 + spin_norm)
-            drag_n = 0.028 * airspeed ** 2
-            imbalance_n = lift_n * bank_norm * (0.65 + 0.35 * spin_norm)
-            torque_nm = 0.0
-            precession = 0.12 * bank_norm * spin_norm
-            cl, cd = 0.0, 0.0
-            thermal = thermal_uplift_mps2(pos, t, cfg.wind_on)
-
-            vel = rotate_vec(vel, math.degrees(precession * cfg.dt))
-            vel += (-air_v / airspeed) * (drag_n / cfg.mass_kg) * cfg.dt * 0.10
-            vel += rotate_vec(air_v / airspeed, 90.0) * (imbalance_n / cfg.mass_kg) * cfg.dt * 0.22
-            altitude += ((lift_n / cfg.mass_kg) - G + thermal) * cfg.dt * 0.05
-            omega *= 1.0 - 0.060 * cfg.dt
-        else:
-            bank_rad = math.radians(roll_deg)
-            pitch_rad = math.radians(pitch_deg)
-            alpha_rad = pitch_rad + 0.18 * bank_rad
-            cl, cd = aero_coefficients(alpha_rad, cfg.camber, cfg)
-            half_area = blade_area / 2.0
-
-            lift_forward = 0.5 * rho * v_forward ** 2 * half_area * cl
-            lift_retreat = 0.5 * rho * v_retreat ** 2 * half_area * cl
-            drag_forward = 0.5 * rho * v_forward ** 2 * half_area * cd
-            drag_retreat = 0.5 * rho * v_retreat ** 2 * half_area * cd
-
-            lift_n = max(0.0, lift_forward + lift_retreat)
-            drag_n = drag_forward + drag_retreat
-            imbalance_n = lift_forward - lift_retreat
-
-            forward_hat = air_v / airspeed
-            drag_force = -forward_hat * drag_n
-            lateral_hat = rotate_vec(forward_hat, 90.0 if roll_deg >= 0 else -90.0)
-            lateral_force = lateral_hat * abs(lift_n * math.sin(bank_rad)) * 0.65
-
-            vertical_lift = lift_n * max(0.0, math.cos(bank_rad))
-            thermal = thermal_uplift_mps2(pos, t, cfg.wind_on)
-            vertical_accel = (vertical_lift / cfg.mass_kg) - G + thermal
-
-            torque_nm = imbalance_n * r * math.sin(abs(bank_rad) + 0.08)
-            H = inertia * max(omega, 0.1)
-            precession = clamp(torque_nm / max(H, 0.015), -2.5, 2.5)
-
-            roll_torque = -0.18 * math.sin(bank_rad) * lift_n
-            pitch_torque = 0.08 * (vertical_lift - cfg.mass_kg * G)
-
-            p_rad_s += (roll_torque / max(inertia * 0.62, 1e-9)) * cfg.dt
-            q_rad_s += (pitch_torque / max(inertia * 0.78, 1e-9)) * cfg.dt
-            r_rad_s = precession * (1.0 if roll_deg >= 0 else -1.0)
-            p_rad_s *= 0.985
-            q_rad_s *= 0.985
-
-            roll_deg = clamp(roll_deg + math.degrees(p_rad_s * cfg.dt), -75.0, 75.0)
-            pitch_deg = clamp(pitch_deg + math.degrees(q_rad_s * cfg.dt), -25.0, 28.0)
-            yaw_deg += math.degrees(r_rad_s * cfg.dt)
-
-            vel = rotate_vec(vel, math.degrees(r_rad_s * cfg.dt))
-            vel += ((drag_force + lateral_force) / cfg.mass_kg) * cfg.dt
-            vel += turbulence_vector_mps2(t, altitude, cfg.wind_on) * cfg.dt
-
-            altitude += vertical_accel * cfg.dt * 0.45
-            omega = max(0.1, omega - ((0.035 * drag_n * r) / max(inertia, 1e-9)) * cfg.dt)
-
-        if altitude <= 0.0:
-            altitude = 0.0
-            vel *= 0.78
-            omega *= 0.82
-            crashed = True
-
-        pos += vel * cfg.dt + wind * cfg.dt * 0.16
-        distance = float(np.linalg.norm(pos))
-        max_range = max(max_range, distance)
-        if t > 1.0:
-            closest_return = min(closest_return, distance)
-
-        energy = 0.5 * cfg.mass_kg * float(np.dot(vel, vel)) + 0.5 * inertia * omega ** 2
-        stall = cl < 0.20 or airspeed < 2.0
-        return_quality = max(0.0, 1.0 - closest_return / 2.4)
-        range_quality = clamp(max_range / 11.0, 0.0, 1.0)
-        spin_quality = clamp(rad_s_to_rpm(omega) / 1400.0, 0.0, 1.0)
-        altitude_quality = clamp(altitude / 4.0, 0.0, 1.0)
-        crash_penalty = 0.55 if crashed else 1.0
-        score = int(1000 * crash_penalty * (0.48 * return_quality + 0.27 * range_quality + 0.15 * spin_quality + 0.10 * altitude_quality))
-
-        rows.append({
-            "time_s": t, "x_m": pos[0], "y_m": pos[1], "altitude_m": altitude,
-            "speed_mps": float(np.linalg.norm(vel)), "airspeed_mps": airspeed,
-            "spin_rpm": rad_s_to_rpm(omega), "roll_deg": roll_deg, "pitch_deg": pitch_deg,
-            "yaw_deg": yaw_deg, "rho": rho, "lift_n": lift_n, "drag_n": drag_n,
-            "imbalance_n": imbalance_n, "torque_nm": torque_nm,
-            "precession_rad_s": precession, "v_forward": v_forward, "v_retreat": v_retreat,
-            "cl": cl, "cd": cd, "thermal_mps2": thermal, "energy_j": energy,
-            "closest_return_m": closest_return, "score": score, "stall": stall, "crashed": crashed,
-        })
-
-        if distance > 24 or t > cfg.duration_s or rad_s_to_rpm(omega) < 80:
-            break
-        t += cfg.dt
-
-    return pd.DataFrame(rows)
-
-
-def trajectory_plot(df: pd.DataFrame, cfg: SimConfig, targets: list[dict] | None = None) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["x_m"], y=df["y_m"], mode="lines", name="Trajectory", line=dict(color=SUN, width=4)))
-    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers+text", name="Launch", marker=dict(size=16, color=WAR_RED), text=["Launch"], textposition="bottom center"))
-    final = df.iloc[-1]
-    fig.add_trace(go.Scatter(x=[final["x_m"]], y=[final["y_m"]], mode="markers+text", name="Boomerang", marker=dict(size=18, color=TURQUOISE), text=["Boomerang"], textposition="top center"))
-
-    if targets:
-        for target in targets:
-            gx, gy, radius = target["x"], target["y"], target["radius"]
-            fig.add_shape(
-                type="circle",
-                x0=gx - radius,
-                y0=gy - radius,
-                x1=gx + radius,
-                y1=gy + radius,
-                line=dict(color=TURQUOISE, width=3),
-                fillcolor="rgba(31,188,194,0.10)",
-            )
-            fig.add_trace(go.Scatter(
-                x=[gx],
-                y=[gy],
-                mode="markers+text",
-                name=f"{target['name']} ({target['points']} pts)",
-                marker=dict(size=10, color=SUN, symbol="x"),
-                text=[f"{target['points']} pts"],
-                textposition="middle right",
-            ))
-    else:
-        for gx, gy in [(6.5, 3.5), (10.8, 6.2), (15.2, 3.8)]:
-            fig.add_shape(type="circle", x0=gx-0.8, y0=gy-0.8, x1=gx+0.8, y1=gy+0.8, line=dict(color=TURQUOISE, width=2))
-
-    fig.update_layout(
-        title=f"🪃 Flight Path | {cfg.mode} Mode",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,13,11,0.88)",
-        font=dict(color=BONE), height=540, margin=dict(l=20, r=20, t=55, b=20),
-        xaxis=dict(title="Range X (m)", gridcolor="rgba(255,196,110,0.20)", zerolinecolor=OCHRE),
-        yaxis=dict(title="Range Y (m)", gridcolor="rgba(255,196,110,0.20)", zerolinecolor=OCHRE, scaleanchor="x", scaleratio=1),
-        legend=dict(bgcolor="rgba(54,28,18,0.65)")
-    )
-    return fig
-
-
-def telemetry_plot(df: pd.DataFrame) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["energy_j"], mode="lines", name="Energy (J)", line=dict(color=SUN)))
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["lift_n"], mode="lines", name="Lift (N)", line=dict(color=TURQUOISE)))
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["torque_nm"], mode="lines", name="Torque (N*m)", line=dict(color=WAR_RED)))
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["closest_return_m"], mode="lines", name="Closest Return (m)", line=dict(color=GREEN)))
-    fig.update_layout(
-        title="📊 Scientific Telemetry", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,13,11,0.88)",
-        font=dict(color=BONE), height=390, margin=dict(l=20, r=20, t=55, b=20),
-        xaxis=dict(title="Time (s)", gridcolor="rgba(255,196,110,0.20)"),
-        yaxis=dict(title="Value", gridcolor="rgba(255,196,110,0.20)"),
-        legend=dict(bgcolor="rgba(54,28,18,0.65)")
-    )
-    return fig
-
-
-def attitude_plot(df: pd.DataFrame) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["roll_deg"], mode="lines", name="Roll", line=dict(color=SUN)))
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["pitch_deg"], mode="lines", name="Pitch", line=dict(color=TURQUOISE)))
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["yaw_deg"], mode="lines", name="Yaw", line=dict(color=WAR_RED)))
-    fig.update_layout(
-        title="🧭 Attitude State", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,13,11,0.88)",
-        font=dict(color=BONE), height=330, margin=dict(l=20, r=20, t=55, b=20),
-        xaxis=dict(title="Time (s)", gridcolor="rgba(255,196,110,0.20)"),
-        yaxis=dict(title="Degrees", gridcolor="rgba(255,196,110,0.20)"),
-        legend=dict(bgcolor="rgba(54,28,18,0.65)")
-    )
-    return fig
-
-
-st.markdown(
-    """
-<div class="hero">
-    <h1>🪃 Return Vector: Boomerang Flight Lab 🦘🔥🌅</h1>
-    <p>A Streamlit-compatible aerospace-inspired boomerang simulator with aerodynamic physics, gyroscopic-style turning, atmospheric effects, telemetry plots, target scoring, and a bright ochre/desert theme.</p>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🪃 Return Vector — Boomerang Target Lab 🦘🐨🔥</h1>
+    <div class="row"><span class="pill">Aim • Throw • Return • Score</span><button class="btn widebtn" id="mode">Switch to Joystick</button></div>
+  </header>
+  <div id="arena">
+    <canvas id="game" width="1280" height="720" aria-label="Boomerang target arena"></canvas>
+    <div class="aeroHud" id="aeroHud">
+      <h3>FLIGHT TELEMETRY</h3>
+      <div class="aeroLine"><span>Airspeed</span><span id="airspeed">0.0</span></div>
+      <div class="aeroLine"><span>Spin</span><span id="spin">0</span></div>
+      <div class="aeroLine"><span>Lift</span><span id="lift">0.0</span></div>
+      <div class="aeroLine"><span>Drag</span><span id="dragv">0.0</span></div>
+      <div class="aeroLine"><span>Torque</span><span id="torque">0.000</span></div>
+      <div class="aeroLine"><span>Precession</span><span id="prec">0.00</span></div>
+      <div class="aeroLine"><span>Blade V f/r</span><span id="bladev">0/0</span></div>
+    </div>
+    <div class="hud" id="hud">
+      <div>Targets: <span id="score">0</span>/<span id="goal">8</span></div>
+      <div>Points: <span id="points">0</span></div>
+      <div>Throws: <span id="throws">0</span></div>
+      <div>Wind: <span id="windread">0.0</span></div>
+    </div>
+  </div>
+  <div class="hint">Use D-pad/joystick to aim • Press THROW • Hit target rings • Curve comes from spin, lift imbalance, and precession</div>
+  <div class="dock">
+    <div id="leftDock"></div>
+    <div class="col">
+      <button class="btn widebtn" id="throwBtn">🪃 THROW</button>
+      <div class="row"><button class="btn" id="mute">🔈</button><button class="btn widebtn" id="reset">⟳ Restart</button></div>
+    </div>
+  </div>
 </div>
-""",
-    unsafe_allow_html=True,
-)
-
-with st.sidebar:
-    st.header("🎮 Simulation Controls")
-    mode = st.selectbox("Simulation Mode", ["Arcade", "Aerospace", "Wind Tunnel", "Research"], index=1)
-
-    st.subheader("🪃 Launch")
-    throw_angle_deg = st.slider("Throw Angle (deg)", 5.0, 75.0, 38.0, 1.0)
-    throw_speed_mps = st.slider("Throw Speed (m/s)", 8.0, 30.0, 18.0, 0.5)
-    spin_rpm = st.slider("Spin RPM", 300.0, 2600.0, 1450.0, 25.0)
-    bank_deg = st.slider("Bank / Roll (deg)", -45.0, 45.0, 24.0, 1.0)
-
-    st.subheader("🎨 Blade Geometry")
-    camber = st.slider("Blade Camber", 0.02, 0.22, 0.12, 0.01)
-    chord_m = st.slider("Chord (m)", 0.025, 0.080, 0.045, 0.001)
-    arm_length_m = st.slider("Arm Length (m)", 0.18, 0.55, 0.32, 0.01)
-    blade_count = st.select_slider("Blade Count", options=[2, 3, 4], value=2)
-
-    st.subheader("🌬️ Environment")
-    wind_on = st.toggle("Wind / Gusts / Thermal Uplift", value=True)
-    duration_s = st.slider("Simulation Duration (s)", 4.0, 22.0, 14.0, 0.5)
-
-    st.subheader("🎯 Target Challenge")
-    target_challenge = st.toggle("Enable Target Challenge", value=True)
-    target_difficulty = st.selectbox("Target Difficulty", ["Easy", "Medium", "Hard"], index=1)
-
-cfg = SimConfig(mode, throw_angle_deg, throw_speed_mps, spin_rpm, bank_deg, camber, chord_m, arm_length_m, blade_count, wind_on, duration_s)
-df = simulate(cfg)
-latest = df.iloc[-1]
-
-targets = target_set(target_difficulty) if target_challenge else []
-target_scores, target_total = score_targets(df, targets) if targets else (pd.DataFrame(), 0)
-combined_score = int(latest["score"]) + int(target_total)
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Flight Score", f"{int(latest['score']):04d}")
-c2.metric("Target Points", f"{target_total}")
-c3.metric("Combined Score", f"{combined_score}")
-c4.metric("Closest Return", f"{latest['closest_return_m']:.2f} m")
-
-c5, c6, c7, c8 = st.columns(4)
-c5.metric("Lift", f"{latest['lift_n']:.2f} N")
-c6.metric("Torque", f"{latest['torque_nm']:.4f} N*m")
-c7.metric("Airspeed", f"{latest['airspeed_mps']:.2f} m/s")
-c8.metric("Spin", f"{latest['spin_rpm']:.0f} rpm")
-
-if bool(latest["crashed"]):
-    st.markdown('<div class="warning-box">⚠️ Ground impact detected. Reduce bank, increase spin, or adjust launch speed.</div>', unsafe_allow_html=True)
-elif bool(latest["stall"]):
-    st.markdown('<div class="warning-box">⚠️ Stall / low-lift condition detected. Increase airspeed, spin, or reduce excessive camber.</div>', unsafe_allow_html=True)
-else:
-    st.markdown('<div class="good-box">✅ Nominal simulated flight state. Try tuning angle, bank, spin, and geometry for a cleaner return.</div>', unsafe_allow_html=True)
-
-left, right = st.columns([1.45, 1.0])
-with left:
-    st.plotly_chart(trajectory_plot(df, cfg, targets), use_container_width=True)
-with right:
-    st.plotly_chart(attitude_plot(df), use_container_width=True)
-
-if target_challenge:
-    st.subheader("🎯 Target Challenge Scoreboard")
-    st.dataframe(target_scores, use_container_width=True, hide_index=True)
-
-st.plotly_chart(telemetry_plot(df), use_container_width=True)
-
-with st.expander("📚 Physics Summary"):
-    st.markdown(
-        """
-This Streamlit version keeps the core educational model while removing the desktop-only Pygame dependency. Target Challenge mode scores hits when the simulated trajectory passes within a target ring radius.
-
-**Lift**
-
-```text
-L = 0.5 * rho * V² * S * CL
-```
-
-**Drag**
-
-```text
-D = 0.5 * rho * V² * S * CD
-```
-
-**Boomerang blade velocity split**
-
-```text
-V_forward ≈ V_translation + rω
-V_retreat ≈ |V_translation - rω|
-```
-
-**Gyroscopic-style response**
-
-```text
-precession ≈ torque / angular momentum
-```
-
-This is an educational visualization model, not a CFD-grade or flight-certified solver.
+<script id="cfg" type="application/json">__CFG_JSON__</script>
+<script>
+(() => {
+  const cfg = JSON.parse(document.getElementById('cfg').textContent || "{}");
+  let audioCtx, muted=false;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  function ensureAudio(){ if(!audioCtx && AC){ audioCtx=new AC(); } if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); }
+  function beep(freq=660,dur=90,type='sine',gain=0.04){
+    if(muted||!audioCtx)return; const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type=type;o.frequency.value=freq;g.gain.value=gain;o.connect(g);g.connect(audioCtx.destination);o.start();setTimeout(()=>o.stop(),dur);
+  }
+  function vibrate(ms=20){ if(navigator.vibrate) try{navigator.vibrate(ms);}catch{} }
+  document.getElementById('mute').addEventListener('click',e=>{ensureAudio();muted=!muted;e.currentTarget.textContent=muted?'🔇':'🔈';});
+  const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+  const W=canvas.width,H=canvas.height,rand=(a,b)=>a+Math.random()*(b-a),clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+  function fit(){const r=W/H,box=document.getElementById('arena').getBoundingClientRect();let w=box.width,h=box.height;if(w/h>r)w=h*r;else h=w/r;canvas.style.width=w+'px';canvas.style.height=h+'px';}
+  addEventListener('resize',fit);fit();
+  function difficultyRadius(){return cfg.difficulty==='easy'?36:(cfg.difficulty==='hard'?22:29);}
+  function targetPoints(){return cfg.difficulty==='easy'?75:(cfg.difficulty==='hard'?175:125);}
+  function spawn(){const r=difficultyRadius();return{
+    aim:{angle:-0.20,power:cfg.throw_power||1,spin:cfg.spin_power||1},
+    boomerang:{x:W*.16,y:H*.62,vx:0,vy:0,omega:0,angle:0,active:false,t:0,trail:[]},
+    targets:Array.from({length:cfg.target_count||12},(_,i)=>({x:rand(W*.28,W*.9),y:rand(H*.12,H*.78),r:r,hit:false,points:targetPoints()+Math.floor(i*8)})),
+    rocks:Array.from({length:cfg.rock_count||14},()=>({x:rand(W*.25,W*.95),y:rand(H*.16,H*.83),r:rand(16,31)})),
+    score:0,points:0,throws:0,goal:cfg.target_goal||8,won:false,telemetry:{airspeed:0,spin:0,lift:0,drag:0,torque:0,prec:0,vf:0,vr:0,wind:0}
+  };}
+  let state=spawn();
+  const keys={};addEventListener('keydown',e=>{keys[e.code]=true;ensureAudio();if(e.code==='Space'){e.preventDefault();throwBoomerang();}});addEventListener('keyup',e=>{keys[e.code]=false;});
+  function buildDpad(){const pad=document.createElement('div');pad.className='pad';pad.innerHTML=`
+    <div class="ghost"></div><button class="btn" data-key="ArrowUp">▲</button><div class="ghost"></div>
+    <button class="btn" data-key="ArrowLeft">◀</button><div class="ghost"></div><button class="btn" data-key="ArrowRight">▶</button>
+    <div class="ghost"></div><button class="btn" data-key="ArrowDown">▼</button><div class="ghost"></div>`;
+    pad.querySelectorAll('.btn[data-key]').forEach(el=>{const code=el.getAttribute('data-key');const press=e=>{e.preventDefault();ensureAudio();keys[code]=true;};const release=e=>{e.preventDefault();keys[code]=false;};
+      el.addEventListener('touchstart',press,{passive:false});el.addEventListener('touchend',release,{passive:false});el.addEventListener('touchcancel',release,{passive:false});el.addEventListener('mousedown',press);el.addEventListener('mouseup',release);el.addEventListener('mouseleave',release);});
+    return pad;}
+  let joy={x:0,y:0,active:false};
+  function buildStick(){const pad=document.createElement('div');pad.className='stickpad';const knob=document.createElement('div');knob.className='stick';knob.textContent='🪃';pad.appendChild(knob);
+    const rect=()=>pad.getBoundingClientRect();function setFrom(evt){const r=rect(),t=(evt.touches&&evt.touches[0])||evt,cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=t.clientX-cx,dy=t.clientY-cy;const max=r.width*.42,m=Math.hypot(dx,dy);if(m>max){dx*=max/m;dy*=max/m;}knob.style.transform=`translate(${dx}px,${dy}px)`;joy={x:dx/max,y:dy/max,active:true};ensureAudio();}
+    function reset(){knob.style.transform='translate(0,0)';joy={x:0,y:0,active:false};}
+    pad.addEventListener('touchstart',e=>{e.preventDefault();setFrom(e);},{passive:false});pad.addEventListener('touchmove',e=>{e.preventDefault();setFrom(e);},{passive:false});pad.addEventListener('touchend',e=>{e.preventDefault();reset();},{passive:false});pad.addEventListener('mousedown',e=>{e.preventDefault();setFrom(e);});pad.addEventListener('mousemove',e=>{if(e.buttons)setFrom(e);});pad.addEventListener('mouseup',reset);pad.addEventListener('mouseleave',reset);return pad;}
+  const leftDock=document.getElementById('leftDock'),modeBtn=document.getElementById('mode');let mode=cfg.control||'dpad';
+  function renderLeft(){leftDock.innerHTML='';if(mode==='dpad'){leftDock.appendChild(buildDpad());modeBtn.textContent='Switch to Joystick';}else{leftDock.appendChild(buildStick());modeBtn.textContent='Switch to D-pad';}}
+  modeBtn.addEventListener('click',()=>{mode=(mode==='dpad'?'joystick':'dpad');renderLeft();ensureAudio();beep(440,80,'triangle',.025);});renderLeft();
+  document.getElementById('reset').addEventListener('click',()=>{state=spawn();vibrate(35);beep(380,90,'square',.035);});
+  document.getElementById('throwBtn').addEventListener('click',()=>{ensureAudio();throwBoomerang();});
+  function throwBoomerang(){const b=state.boomerang;if(b.active)return;state.throws++;const speed=430*(cfg.throw_power||1)*state.aim.power,angle=state.aim.angle;b.x=W*.16;b.y=H*.62;b.vx=Math.cos(angle)*speed;b.vy=Math.sin(angle)*speed;b.omega=1650*(cfg.spin_power||1)*state.aim.spin;b.angle=angle;b.active=true;b.t=0;b.trail=[];vibrate(32);beep(660,70,'sine',.04);setTimeout(()=>beep(820,55,'triangle',.032),75);}
+  function updateAim(dt){if(state.boomerang.active)return;if(mode==='joystick'&&joy.active){state.aim.angle=Math.atan2(joy.y,Math.max(.15,joy.x));state.aim.power=clamp(.7+Math.hypot(joy.x,joy.y)*.7,.65,1.55);state.aim.spin=clamp(.8+Math.max(0,-joy.y)*.65,.65,1.8);}else{if(keys.ArrowLeft)state.aim.angle-=1.65*dt;if(keys.ArrowRight)state.aim.angle+=1.65*dt;if(keys.ArrowUp)state.aim.power=clamp(state.aim.power+.55*dt,.65,1.55);if(keys.ArrowDown)state.aim.power=clamp(state.aim.power-.55*dt,.65,1.55);}state.aim.angle=clamp(state.aim.angle,-1.20,.45);}
+  function updateBoomerang(dt){const b=state.boomerang;if(!b.active)return;b.t+=dt;const windBase=cfg.wind_strength||.65,wx=22*windBase+12*windBase*Math.sin(b.t*.9),wy=7*windBase*Math.cos(b.t*.55),airVx=b.vx-wx,airVy=b.vy-wy,V=Math.max(1,Math.hypot(airVx,airVy)),omegaRad=Math.max(.1,b.omega*2*Math.PI/60),r=.32,vf=V+r*omegaRad,vr=Math.max(.1,Math.abs(V-r*omegaRad));
+    const rho=1.225,area=.32*.045*2,cl=.68+.12*Math.sin(b.t*1.2),cd=.055+.045*cl*cl,lift=.5*rho*((vf*vf+vr*vr)/2)*area*cl,dragForce=.5*rho*V*V*area*cd*(cfg.drag||.62),imbalance=.5*rho*(vf*vf-vr*vr)*(area/2)*cl,torque=imbalance*r*.20,H=.095*(.32*.32/3)*omegaRad,precession=clamp(torque/Math.max(H,.015),-2.2,2.2);
+    const turn=precession*.82*dt,c=Math.cos(turn),s=Math.sin(turn),nvx=b.vx*c-b.vy*s,nvy=b.vx*s+b.vy*c;b.vx=nvx;b.vy=nvy;b.vx+=(-airVx/V)*dragForce*dt*.38;b.vy+=(-airVy/V)*dragForce*dt*.38;b.vy-=lift*dt*1.1;b.vx+=wx*dt*.18;b.vy+=wy*dt*.18;b.x+=b.vx*dt;b.y+=b.vy*dt;b.omega*=(1-.075*dt);b.angle+=omegaRad*dt*2;b.trail.push({x:b.x,y:b.y});if(b.trail.length>160)b.trail.shift();
+    state.telemetry={airspeed:V,spin:b.omega,lift,drag:dragForce,torque,prec:precession,vf,vr,wind:Math.hypot(wx,wy)};
+    for(const t of state.targets){if(t.hit)continue;const d=Math.hypot(b.x-t.x,b.y-t.y);if(d<t.r+20){t.hit=true;state.score++;state.points+=t.points;vibrate(22);beep(900,65,'sine',.04);setTimeout(()=>beep(1120,55,'triangle',.035),60);if(state.score>=state.goal){state.won=true;vibrate(90);setTimeout(()=>vibrate(90),120);}}}
+    for(const rck of state.rocks){if(Math.hypot(b.x-rck.x,b.y-rck.y)<rck.r+16){b.vx*=.72;b.vy*=.72;b.omega*=.88;vibrate(18);beep(170,70,'square',.025);}}
+    if(b.x<-120||b.x>W+140||b.y<-160||b.y>H+160||b.t>14||b.omega<110){b.active=false;beep(240,65,'sine',.025);}}
+  function update(dt){updateAim(dt);updateBoomerang(dt);document.getElementById('score').textContent=Math.min(state.score,state.goal);document.getElementById('goal').textContent=state.goal;document.getElementById('points').textContent=state.points;document.getElementById('throws').textContent=state.throws;document.getElementById('windread').textContent=state.telemetry.wind.toFixed(1);document.getElementById('airspeed').textContent=state.telemetry.airspeed.toFixed(1)+' px/s';document.getElementById('spin').textContent=state.telemetry.spin.toFixed(0)+' rpm';document.getElementById('lift').textContent=state.telemetry.lift.toFixed(2)+' N';document.getElementById('dragv').textContent=state.telemetry.drag.toFixed(2)+' N';document.getElementById('torque').textContent=state.telemetry.torque.toFixed(3);document.getElementById('prec').textContent=state.telemetry.prec.toFixed(2);document.getElementById('bladev').textContent=state.telemetry.vf.toFixed(0)+'/'+state.telemetry.vr.toFixed(0);}
+  function drawBackground(){const grad=ctx.createLinearGradient(0,0,0,H);grad.addColorStop(0,'#3a160b');grad.addColorStop(.55,'#8d361f');grad.addColorStop(1,'#160806');ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);ctx.fillStyle='rgba(255,184,36,.88)';ctx.beginPath();ctx.arc(W*.77,H*.32,56,0,Math.PI*2);ctx.fill();ctx.fillStyle='#2a1008';ctx.beginPath();ctx.moveTo(0,H*.72);for(let x=0;x<=W;x+=80){ctx.lineTo(x,H*.72+Math.sin(x*.011)*22);}ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();ctx.fill();for(let x=45;x<W;x+=80){for(let y=42;y<H;y+=92){ctx.fillStyle='rgba(255,196,110,.45)';ctx.beginPath();ctx.arc(x,y,2.3+Math.sin((x+y)*.02)*1.2,0,Math.PI*2);ctx.fill();}}ctx.strokeStyle='rgba(219,40,38,.55)';ctx.lineWidth=10;for(let x=-W;x<W;x+=180){ctx.beginPath();ctx.moveTo(x,H);ctx.lineTo(x+H,0);ctx.stroke();}ctx.strokeStyle='rgba(31,188,194,.45)';ctx.lineWidth=4;for(let x=-W+60;x<W;x+=180){ctx.beginPath();ctx.moveTo(x,H);ctx.lineTo(x+H,0);ctx.stroke();}}
+  function drawBoomerang(x,y,ang,scale=1){ctx.save();ctx.translate(x,y);ctx.rotate(ang);ctx.scale(scale,scale);ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#fff0d0';ctx.lineWidth=18;ctx.beginPath();ctx.moveTo(-52,16);ctx.quadraticCurveTo(-4,-20,58,-10);ctx.stroke();ctx.strokeStyle='#db2826';ctx.lineWidth=10;ctx.beginPath();ctx.moveTo(-42,13);ctx.quadraticCurveTo(-1,-12,48,-7);ctx.stroke();ctx.strokeStyle='#ffb824';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(-20,8);ctx.quadraticCurveTo(4,-4,28,-3);ctx.stroke();ctx.fillStyle='#1fbcc2';for(let i=-35;i<=35;i+=22){ctx.beginPath();ctx.arc(i,2*Math.sin(i),3,0,Math.PI*2);ctx.fill();}ctx.restore();}
+  function drawAim(){const b=state.boomerang;if(b.active)return;const x=W*.16,y=H*.62,len=145*state.aim.power;ctx.strokeStyle='#ffb824';ctx.lineWidth=5;ctx.setLineDash([10,8]);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+Math.cos(state.aim.angle)*len,y+Math.sin(state.aim.angle)*len);ctx.stroke();ctx.setLineDash([]);drawBoomerang(x,y,state.aim.angle,.7);}
+  function drawTargets(){for(const t of state.targets){if(t.hit)continue;ctx.save();ctx.translate(t.x,t.y);ctx.strokeStyle='#1fbcc2';ctx.lineWidth=4;ctx.beginPath();ctx.arc(0,0,t.r,0,Math.PI*2);ctx.stroke();ctx.strokeStyle='#ffb824';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,t.r*.58,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#fff0d0';ctx.font='bold 13px system-ui';ctx.textAlign='center';ctx.fillText(t.points,0,4);ctx.restore();}}
+  function drawRocks(){for(const r of state.rocks){ctx.fillStyle='#3d251c';ctx.strokeStyle='#ffc46e88';ctx.lineWidth=2;ctx.beginPath();ctx.arc(r.x,r.y,r.r,0,Math.PI*2);ctx.fill();ctx.stroke();}}
+  function drawBoomerangFlight(){const b=state.boomerang;if(!b.active)return;for(let i=1;i<b.trail.length;i++){const a=i/b.trail.length;ctx.strokeStyle=`rgba(255,184,36,${a*.75})`;ctx.lineWidth=2+a*4;ctx.beginPath();ctx.moveTo(b.trail[i-1].x,b.trail[i-1].y);ctx.lineTo(b.trail[i].x,b.trail[i].y);ctx.stroke();}drawBoomerang(b.x,b.y,b.angle,.82);}
+  function drawWin(){if(!state.won)return;ctx.fillStyle='rgba(17,13,11,.82)';ctx.fillRect(W*.22,H*.39,W*.56,120);ctx.strokeStyle='#ffb824';ctx.lineWidth=5;ctx.strokeRect(W*.22,H*.39,W*.56,120);ctx.fillStyle='#ffb824';ctx.font='900 34px system-ui';ctx.textAlign='center';ctx.fillText('TARGET MASTER',W*.5,H*.39+55);ctx.fillStyle='#fff0d0';ctx.font='bold 18px system-ui';ctx.fillText('Reset to play again',W*.5,H*.39+86);}
+  function draw(){ctx.clearRect(0,0,W,H);drawBackground();drawTargets();drawRocks();drawAim();drawBoomerangFlight();drawWin();}
+  draw();let last=performance.now();function tick(t){const dt=Math.min(.032,(t-last)/1000);last=t;update(dt);draw();requestAnimationFrame(tick);}requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
 """
-    )
 
-st.markdown(
-    """
-<hr>
-<p class="small-note">
-🪃 Return Vector is now deployable on Streamlit Cloud. Keep the Pygame desktop version separately as <code>pygame_app.py</code> if you want the local arcade game too.
-</p>
-""",
-    unsafe_allow_html=True,
-)
+components.html(HTML.replace("__CFG_JSON__", json.dumps(cfg)), height=850, scrolling=False)
